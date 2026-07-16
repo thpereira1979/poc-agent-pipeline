@@ -1,8 +1,8 @@
-# POC - Agente Copilot na Pipeline CI/CD
+# POC - Agente LLM na Pipeline CI/CD
 
 ## Visão Geral
 
-Esta POC demonstra a viabilidade técnica de ter um **agente inteligente (GitHub Copilot)** rodando dentro de uma esteira CI/CD no GitHub Actions. Quando o módulo Python é alterado, a pipeline executa os testes e, em caso de falha, o **Copilot CLI** analisa o erro e envia uma explicação inteligente para o **Microsoft Teams**.
+Esta POC demonstra a viabilidade técnica de ter um **agente inteligente (LLM)** rodando dentro de uma esteira CI/CD no GitHub Actions. Quando o módulo Python é alterado, a pipeline executa os testes e, em caso de falha, o agente analisa o erro usando **Google Gemini** e envia uma explicação inteligente para o **Microsoft Teams**.
 
 ## Arquitetura
 
@@ -11,11 +11,12 @@ Esta POC demonstra a viabilidade técnica de ter um **agente inteligente (GitHub
 │                        GITHUB ACTIONS                                 │
 │                                                                      │
 │  ┌─────────┐    ┌─────────┐    ┌──────────────┐    ┌─────────────┐ │
-│  │ Checkout │───▶│ Pytest  │───▶│ Copilot CLI  │───▶│ Teams       │ │
-│  │  código  │    │ (testes)│    │ (análise IA) │    │ (Webhook)   │ │
-│  └─────────┘    └────┬────┘    └──────────────┘    └─────────────┘ │
-│                       │                                              │
-│                  test_output.log                                      │
+│  │ Checkout │───▶│ Pytest  │───▶│ Agente LLM   │───▶│ Teams       │ │
+│  │  código  │    │ (testes)│    │ (Gemini API) │    │ (Webhook)   │ │
+│  └─────────┘    └────┬────┘    └──────┬───────┘    └─────────────┘ │
+│                       │               │                              │
+│                  test_output.log   Análise salva                      │
+│                                   como Artifact                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -25,50 +26,44 @@ Esta POC demonstra a viabilidade técnica de ter um **agente inteligente (GitHub
 2. GitHub Actions dispara a pipeline
 3. Pytest executa os testes unitários
 4. **Se testes passam** → pipeline finaliza com sucesso ✅
-5. **Se testes falham** → Copilot CLI é acionado:
-   - Recebe o log de erro como prompt
-   - Gera análise inteligente (causa raiz + sugestão de correção)
-   - Script Python envia Adaptive Card para canal do Teams
+5. **Se testes falham** → Agente LLM é acionado:
+   - Lê o log de erro dos testes
+   - Envia para a API do Google Gemini para análise inteligente
+   - Recebe: resumo da falha, causa raiz e sugestão de correção
+   - Salva análise como artifact (download disponível por 30 dias)
+   - Envia Adaptive Card para canal do Teams via webhook
    - Pipeline falha com indicação de verificar o Teams
 
 ---
 
 ## Pré-requisitos
 
-- Conta GitHub com **plano Copilot ativo** (Individual, Business ou Enterprise)
+- Conta GitHub
+- **Google AI Studio** com API key (billing habilitado)
 - Acesso a um canal do **Microsoft Teams**
 - Git instalado localmente
+- Python 3.12+
 
 ---
 
 ## Passo a Passo de Configuração
 
-### 1. Clonar/Subir o Repositório
+### 1. Clonar o Repositório
 
-Se ainda não fez push:
 ```bash
-git init
-git add .
-git commit -m "feat: POC agente Copilot na pipeline"
-git branch -M main
-git remote add origin https://github.com/SEU_USUARIO/poc-agent-pipeline.git
-git push -u origin main
+git clone https://github.com/thpereira1979/poc-agent-pipeline.git
+cd poc-agent-pipeline
 ```
 
-### 2. Criar Personal Access Token (PAT) para o Copilot
+### 2. Obter API Key do Google Gemini
 
-O Copilot CLI precisa de um PAT com permissão específica:
+1. Acesse: https://aistudio.google.com/apikey
+2. Clique em **"Create API Key"**
+3. Selecione um projeto com billing habilitado
+4. **Copie a key** gerada
 
-1. Acesse: https://github.com/settings/personal-access-tokens/new
-2. Selecione **Fine-grained token**
-3. Configure:
-   - **Nome:** `copilot-ci-agent`
-   - **Expiração:** 90 dias (ou conforme política)
-   - **Repository access:** selecione o repositório `poc-agent-pipeline`
-   - **Permissions:**
-     - Em **Account permissions**, habilite: **Copilot Requests → Read and write**
-4. Clique em **Generate token**
-5. **Copie o token** (começa com `github_pat_...`)
+> ⚠️ O billing precisa estar habilitado no projeto Google Cloud vinculado.
+> Para habilitar: https://console.cloud.google.com/billing
 
 ### 3. Configurar Incoming Webhook no Microsoft Teams
 
@@ -79,7 +74,7 @@ O Copilot CLI precisa de um PAT com permissão específica:
 3. Clique nos **três pontos (⋯)** ao lado do nome do canal
 4. Selecione **Gerenciar canal** > **Conectores**
 5. Procure **"Incoming Webhook"** e clique em **Configurar**
-6. Dê um nome: `CI Pipeline Copilot`
+6. Dê um nome: `CI Pipeline Agent`
 7. Clique em **Criar**
 8. **Copie a URL** do webhook gerado
 
@@ -93,6 +88,12 @@ O Copilot CLI precisa de um PAT com permissão específica:
 
 #### Testar o Webhook (opcional)
 
+PowerShell:
+```powershell
+$body = '{"type":"message","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive","content":{"type":"AdaptiveCard","version":"1.4","body":[{"type":"TextBlock","text":"✅ Webhook funcionando!"}]}}]}'
+Invoke-RestMethod -Uri "SUA_URL_DO_WEBHOOK" -Method Post -Body $body -ContentType "application/json"
+```
+
 Linux/Mac:
 ```bash
 curl -X POST "SUA_URL_DO_WEBHOOK" \
@@ -100,34 +101,15 @@ curl -X POST "SUA_URL_DO_WEBHOOK" \
   -d '{"type":"message","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive","content":{"type":"AdaptiveCard","version":"1.4","body":[{"type":"TextBlock","text":"✅ Webhook funcionando!"}]}}]}'
 ```
 
-PowerShell:
-```powershell
-$body = '{"type":"message","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive","content":{"type":"AdaptiveCard","version":"1.4","body":[{"type":"TextBlock","text":"✅ Webhook funcionando!"}]}}]}'
-Invoke-RestMethod -Uri "SUA_URL_DO_WEBHOOK" -Method Post -Body $body -ContentType "application/json"
-```
-
-Se a mensagem aparecer no canal, o webhook está OK.
-
 ### 4. Configurar GitHub Secrets
 
-1. Vá ao repositório no GitHub: **Settings** > **Secrets and variables** > **Actions**
+1. Acesse: https://github.com/thpereira1979/poc-agent-pipeline/settings/secrets/actions
 2. Clique em **New repository secret** e adicione:
 
 | Nome do Secret       | Valor                                          |
 |---------------------|------------------------------------------------|
-| `COPILOT_PAT`       | Token PAT criado no passo 2                    |
-| `TEAMS_WEBHOOK_URL` | URL do webhook do Teams criada no passo 3      |
-
-### 5. Verificar Permissões do Workflow
-
-O workflow já está configurado com:
-```yaml
-permissions:
-  contents: read
-  copilot-requests: write
-```
-
-Isso permite que o Copilot CLI funcione com o PAT dentro do Actions.
+| `GEMINI_API_KEY`    | API key do Google AI Studio                    |
+| `TEAMS_WEBHOOK_URL` | URL do webhook do Teams                        |
 
 ---
 
@@ -135,14 +117,16 @@ Isso permite que o Copilot CLI funcione com o PAT dentro do Actions.
 
 ### Cenário 1: Testes Passam (sem notificação)
 
-Sem alterar nada no módulo, a pipeline passa normalmente:
+Com o código correto, faça um push com alteração em `src/`:
 ```bash
-git commit --allow-empty -m "test: trigger pipeline"
+# Adicione um comentário no arquivo, por exemplo
+git add src/calculadora.py
+git commit -m "test: validar pipeline sem erro"
 git push
 ```
-> Nota: só dispara se houver mudanças em `src/`. Para teste rápido, adicione um comentário.
+Pipeline passa sem acionar o agente.
 
-### Cenário 2: Forçar Erro (Copilot analisa + notifica Teams)
+### Cenário 2: Forçar Erro (agente analisa + notifica Teams)
 
 Introduza um bug no módulo:
 
@@ -150,30 +134,31 @@ Introduza um bug no módulo:
 # src/calculadora.py - altere a função somar:
 def somar(a: float, b: float) -> float:
     """Retorna a soma de dois números."""
-    return a - b  # BUG INTENCIONAL: subtrai ao invés de somar
+    return a - b  # BUG INTENCIONAL
 ```
 
-Faça push:
 ```bash
 git add src/calculadora.py
-git commit -m "test: introduzir bug para testar agente Copilot"
+git commit -m "test: introduzir bug para testar agente"
 git push
 ```
 
 **Resultado esperado:**
 1. ✅ Pipeline dispara (mudança em `src/`)
 2. ✅ Pytest executa → testes falham
-3. ✅ Copilot CLI recebe o log e gera análise
-4. ✅ Script Python envia Adaptive Card para o Teams
-5. ✅ Pipeline falha com mensagem clara
+3. ✅ Agente chama API do Gemini com o log de erro
+4. ✅ Gemini retorna análise (resumo, causa raiz, sugestão)
+5. ✅ Análise salva como artifact (download na página do Actions)
+6. ✅ Adaptive Card enviada para o canal do Teams
+7. ❌ Pipeline falha com mensagem indicando verificar o Teams
 
 ### Cenário 3: Corrigir o Bug
 
 ```python
-# src/calculadora.py - restaure a função:
+# src/calculadora.py - restaure:
 def somar(a: float, b: float) -> float:
     """Retorna a soma de dois números."""
-    return a + b  # Corrigido
+    return a + b
 ```
 
 ```bash
@@ -182,7 +167,17 @@ git commit -m "fix: corrigir função somar"
 git push
 ```
 
-Pipeline deve passar sem acionar o Copilot.
+Pipeline passa sem acionar o agente.
+
+---
+
+## Onde Ver a Análise do Agente
+
+A análise gerada pelo LLM fica disponível em 3 lugares:
+
+1. **Log da pipeline** — Expanda o step "Executar Agente de Análise (Gemini)" na aba Actions
+2. **Artifact** — Na página Summary da execução, role até "Artifacts" e baixe `analise-agente` (contém `copilot_analysis.txt` e `test_output.log`)
+3. **Teams** — Adaptive Card no canal configurado com link direto para a pipeline
 
 ---
 
@@ -198,8 +193,8 @@ Pipeline deve passar sem acionar o Copilot.
 │   └── test_calculadora.py     # Testes unitários (pytest)
 ├── agent/
 │   ├── __init__.py
-│   ├── analyzer.py             # (legado - GitHub Models)
-│   └── notify_teams.py         # Envia análise para Teams
+│   ├── analyzer.py             # Agente LLM (Gemini + Teams)
+│   └── notify_teams.py         # Script auxiliar de notificação
 ├── .github/
 │   └── workflows/
 │       └── ci-agent.yml        # Pipeline GitHub Actions
@@ -210,30 +205,48 @@ Pipeline deve passar sem acionar o Copilot.
 
 ---
 
+## Como o Agente Funciona (analyzer.py)
+
+O agente executa o seguinte fluxo:
+
+1. **Carrega o log** de erro gerado pelo pytest (`test_output.log`)
+2. **Tenta múltiplos modelos** Gemini em sequência (fallback automático):
+   - `gemini-3.5-flash`
+   - `gemini-3.5-flash-preview-05-20`
+   - `gemini-3-flash-preview`
+   - `gemini-1.5-flash-latest`
+   - `gemini-1.5-flash`
+3. **Recebe a análise** com: resumo, causa raiz e sugestão de correção
+4. **Salva em arquivo** (`copilot_analysis.txt`) para upload como artifact
+5. **Envia para o Teams** como Adaptive Card com informações do repositório, branch, commit e link para a pipeline
+
+---
+
 ## Critérios de Sucesso da POC
 
 | # | Critério                                                    | Status |
 |---|-------------------------------------------------------------|--------|
 | 1 | Pipeline dispara apenas quando `src/` é alterado            | ⬜     |
 | 2 | Testes executam corretamente (pytest)                       | ⬜     |
-| 3 | Copilot CLI é acionado SOMENTE quando há falha              | ⬜     |
-| 4 | Copilot retorna análise coerente em português               | ⬜     |
-| 5 | Notificação chega no Teams com Adaptive Card                | ⬜     |
-| 6 | Card contém: repo, branch, commit, análise, link            | ⬜     |
-| 7 | Pipeline falha corretamente quando testes falham            | ⬜     |
+| 3 | Agente é acionado SOMENTE quando há falha                   | ⬜     |
+| 4 | LLM retorna análise coerente em português                   | ⬜     |
+| 5 | Análise salva como artifact para download                   | ⬜     |
+| 6 | Notificação chega no Teams com Adaptive Card                | ⬜     |
+| 7 | Card contém: repo, branch, commit, análise, link            | ⬜     |
+| 8 | Pipeline falha corretamente quando testes falham            | ⬜     |
 
 ---
 
 ## Troubleshooting
 
-### Erro "copilot: command not found"
-- Verifique se o step de instalação está antes do step de execução
-- Confirme que `npm install -g @github/copilot` foi executado com sucesso
+### Erro 404 no Gemini (modelo não encontrado)
+- O agente tenta múltiplos modelos automaticamente
+- Se todos falharem, verifique se o billing está ativo no projeto Google Cloud
+- Acesse https://aistudio.google.com para verificar modelos disponíveis
 
-### Erro de autenticação do Copilot
-- Confirme que o secret `COPILOT_PAT` está configurado
-- Verifique se o PAT tem a permissão **"Copilot Requests"**
-- Confirme que seu plano Copilot está ativo
+### Erro 429 (quota excedida)
+- Habilite billing no Google Cloud: https://console.cloud.google.com/billing
+- Vincule o projeto da API key a uma billing account
 
 ### Webhook do Teams não funciona
 - Teste a URL manualmente com curl/PowerShell
@@ -242,27 +255,44 @@ Pipeline deve passar sem acionar o Copilot.
 
 ### Testes não encontram o módulo
 - Verifique se `src/__init__.py` existe
-- Teste localmente: `pytest tests/ -v`
+- Teste localmente: `python -m pytest tests/ -v`
+
+### Artifact não aparece
+- O artifact fica na página **Summary** da execução (não no job)
+- Role até o final da página Summary para encontrar a seção "Artifacts"
 
 ---
 
-## Executando Localmente (para debug)
+## Executando Localmente
 
 ```bash
 # Instalar dependências
 pip install -r requirements.txt
 
-# Rodar testes (devem passar)
-pytest tests/ -v
+# Rodar testes (devem passar com código correto)
+python -m pytest tests/ -v
 
-# Simular falha e gerar log
-# (altere calculadora.py com bug, depois rode:)
-pytest tests/ -v --tb=long > test_output.log 2>&1
+# Simular falha (altere calculadora.py com bug, depois rode):
+python -m pytest tests/ -v --tb=long > test_output.log 2>&1
 
-# Testar envio para Teams (precisa da env var)
-export TEAMS_WEBHOOK_URL="url_do_webhook"
-python agent/notify_teams.py
+# Rodar agente manualmente
+set GEMINI_API_KEY=sua_key_aqui
+set TEAMS_WEBHOOK_URL=url_do_webhook
+set TEST_LOG_PATH=test_output.log
+python agent/analyzer.py
 ```
+
+---
+
+## Custos
+
+| Recurso | Custo estimado |
+|---------|---------------|
+| GitHub Actions | Gratuito (2000 min/mês em repos públicos) |
+| Gemini API (por execução) | ~$0.0002 (menos de 0,02 centavos) |
+| Teams Webhook | Gratuito |
+
+Para gastar $1 no Gemini, seriam necessárias ~5.000 execuções do agente.
 
 ---
 
@@ -271,7 +301,7 @@ python agent/notify_teams.py
 - **Python 3.12** — Linguagem do módulo e scripts
 - **pytest** — Framework de testes
 - **GitHub Actions** — Plataforma de CI/CD
-- **GitHub Copilot CLI** — Agente LLM para análise de erros
+- **Google Gemini API** — LLM para análise inteligente de erros
 - **Microsoft Teams (Incoming Webhook)** — Canal de notificação
 - **Adaptive Cards** — Formato rico para mensagens no Teams
 
@@ -279,7 +309,8 @@ python agent/notify_teams.py
 
 ## Referências
 
-- [GitHub Copilot CLI em Actions](https://docs.github.com/en/copilot/how-tos/copilot-cli/automate-copilot-cli/automate-with-actions)
-- [Autenticação com GITHUB_TOKEN](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli-in-actions)
+- [Google AI Studio - API Keys](https://aistudio.google.com/apikey)
+- [Gemini API Docs](https://ai.google.dev/gemini-api/docs)
+- [GitHub Actions Docs](https://docs.github.com/en/actions)
 - [Adaptive Cards Designer](https://adaptivecards.io/designer/)
 - [Teams Incoming Webhooks](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook)

@@ -205,8 +205,8 @@ def main():
     print(f"📄 Log carregado ({len(log_erro)} caracteres)")
     print("-" * 60)
 
-    # 2. Analisar com LLM (Groq - Llama 3.1 70B)
-    print("🧠 Enviando para análise via Google Gemini (gemini-2.0-flash)...")
+    # 2. Analisar com LLM (Google Gemini)
+    print("🧠 Enviando para análise via Google Gemini...")
     analise = analisar_com_llm(log_erro)
     print("\n📋 ANÁLISE DO AGENTE:")
     print("-" * 60)
