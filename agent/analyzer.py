@@ -26,10 +26,11 @@ def analisar_com_llm(log_erro: str) -> str:
 
     # Lista de modelos para tentar (do mais novo ao mais antigo)
     modelos = [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-preview-05-20",
+        "gemini-3-flash-preview",
         "gemini-1.5-flash-latest",
         "gemini-1.5-flash",
-        "gemini-1.5-pro-latest",
-        "gemini-pro",
     ]
 
     prompt = (

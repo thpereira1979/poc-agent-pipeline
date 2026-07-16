@@ -3,7 +3,7 @@
 
 def somar(a: float, b: float) -> float:
     """Retorna a soma de dois números."""
-    return a - b  # BUG para teste fallback modelos
+    return a - b  # BUG teste gemini-3.5-flash
 
 
 def subtrair(a: float, b: float) -> float:
