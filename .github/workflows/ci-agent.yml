@@ -58,13 +58,28 @@ jobs:
             echo "has_errors=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Preparar prompt para Copilot
+        if: steps.check.outputs.has_errors == 'true'
+        run: |
+          cat <<'PROMPT_EOF' > copilot_prompt.txt
+          Você é um engenheiro de software sênior especialista em Python.
+          Analise o log de erro de testes abaixo e forneça:
+          1) Um resumo claro do que falhou
+          2) A causa raiz provável
+          3) Sugestão de correção
+          Seja direto e objetivo. Responda em português brasileiro.
+
+          === LOG DE ERRO ===
+          PROMPT_EOF
+          cat test_output.log >> copilot_prompt.txt
+
       - name: Analisar erro com Copilot CLI
         if: steps.check.outputs.has_errors == 'true'
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
         run: |
-          ERROR_LOG=$(cat test_output.log)
-          copilot -p "Você é um engenheiro de software sênior especialista em Python. Analise o log de erro de testes abaixo e forneça: 1) Um resumo claro do que falhou 2) A causa raiz provável 3) Sugestão de correção. Seja direto e objetivo. Responda em português brasileiro. Log de erro: ${ERROR_LOG}" --no-ask-user > copilot_analysis.txt 2>&1
+          PROMPT=$(cat copilot_prompt.txt)
+          copilot -p "$PROMPT" --no-ask-user > copilot_analysis.txt 2>&1 || true
           echo "--- ANÁLISE DO COPILOT ---"
           cat copilot_analysis.txt
 
