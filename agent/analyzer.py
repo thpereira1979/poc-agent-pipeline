@@ -26,7 +26,7 @@ def analisar_com_llm(log_erro: str) -> str:
 
     endpoint = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
+        f"gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
     )
 
     prompt = (
