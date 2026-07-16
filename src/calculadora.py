@@ -13,7 +13,7 @@ def subtrair(a: float, b: float) -> float:
 
 def multiplicar(a: float, b: float) -> float:
     """Retorna a multiplicação de dois números."""
-    return a / b
+    return a * b
 
 
 def dividir(a: float, b: float) -> float:
