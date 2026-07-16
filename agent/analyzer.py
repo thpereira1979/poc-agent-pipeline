@@ -24,10 +24,13 @@ def analisar_com_llm(log_erro: str) -> str:
     if not api_key:
         return "ERRO: GEMINI_API_KEY não configurada."
 
-    endpoint = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash:generateContent?key={api_key}"
-    )
+    # Lista de modelos para tentar (do mais novo ao mais antigo)
+    modelos = [
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro-latest",
+        "gemini-pro",
+    ]
 
     prompt = (
         "Você é um engenheiro de software sênior especialista em Python. "
@@ -47,27 +50,37 @@ def analisar_com_llm(log_erro: str) -> str:
         },
     }
 
-    try:
-        response = requests.post(
-            endpoint,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=60,
+    for modelo in modelos:
+        endpoint = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{modelo}:generateContent?key={api_key}"
         )
+        print(f"  Tentando modelo: {modelo}...")
 
-        if response.status_code != 200:
-            return (
-                f"Erro ao chamar Gemini API: {response.status_code} - "
-                f"{response.text}"
+        try:
+            response = requests.post(
+                endpoint,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=60,
             )
 
-        resultado = response.json()
-        return resultado["candidates"][0]["content"]["parts"][0]["text"]
+            if response.status_code == 200:
+                resultado = response.json()
+                print(f"  ✅ Sucesso com modelo: {modelo}")
+                return resultado["candidates"][0]["content"]["parts"][0]["text"]
+            else:
+                print(f"  ❌ {modelo}: {response.status_code} - {response.json().get('error', {}).get('message', 'erro desconhecido')}")
+                continue
 
-    except requests.RequestException as e:
-        return f"Erro de conexão com Gemini API: {e}"
-    except (KeyError, IndexError) as e:
-        return f"Erro ao processar resposta do Gemini: {e}"
+        except requests.RequestException as e:
+            print(f"  ❌ {modelo}: erro de conexão - {e}")
+            continue
+        except (KeyError, IndexError) as e:
+            print(f"  ❌ {modelo}: erro ao processar resposta - {e}")
+            continue
+
+    return "ERRO: Nenhum modelo Gemini disponível respondeu com sucesso."
 
 
 def enviar_teams(mensagem: str, webhook_url: str) -> bool:
