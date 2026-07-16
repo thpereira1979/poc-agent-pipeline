@@ -83,6 +83,16 @@ jobs:
           echo "--- ANÁLISE DO COPILOT ---"
           cat copilot_analysis.txt
 
+      - name: Salvar análise como artifact
+        if: steps.check.outputs.has_errors == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: copilot-analysis
+          path: |
+            copilot_analysis.txt
+            test_output.log
+          retention-days: 30
+
       - name: Enviar notificação para Teams
         if: steps.check.outputs.has_errors == 'true'
         env:
