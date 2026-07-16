@@ -1,8 +1,6 @@
 """
-Agente LLM que analisa erros de testes e envia notificação inteligente via Teams.
-
-Utiliza GitHub Models (GPT-4o) para gerar explicações dos erros encontrados
-e envia o resultado para um canal do Microsoft Teams via Incoming Webhook.
+Agente LLM que analisa erros de testes usando Google Gemini
+e envia notificação inteligente via Microsoft Teams.
 """
 
 import json
@@ -20,54 +18,69 @@ def carregar_log_erro(caminho_log: str) -> str:
         return f.read()
 
 
-def analisar_com_llm(log_erro: str) -> str:
-    """Envia o log de erro para o GitHub Models e retorna a análise."""
-    token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        return "ERRO: GITHUB_TOKEN não configurado."
+def analisar_com_gemini(log_erro: str) -> str:
+    """Envia o log de erro para o Google Gemini e retorna a análise."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return "ERRO: GEMINI_API_KEY não configurada."
 
-    endpoint = "https://models.github.ai/inference/chat/completions"
+    endpoint = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.0-flash:generateContent?key={api_key}"
+    )
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
-    prompt_sistema = (
+    prompt = (
         "Você é um engenheiro de software sênior especialista em Python. "
         "Analise o log de erro de testes abaixo e forneça:\n"
         "1. Um resumo claro do que falhou\n"
         "2. A causa raiz provável\n"
-        "3. Sugestão de correção\n\n"
-        "Seja direto e objetivo. Responda em português brasileiro."
+        "3. Sugestão de correção com exemplo de código\n\n"
+        "Seja direto e objetivo. Responda em português brasileiro.\n\n"
+        f"=== LOG DE ERRO ===\n{log_erro}"
     )
 
     payload = {
-        "model": "openai/gpt-4o",
-        "messages": [
-            {"role": "system", "content": prompt_sistema},
-            {"role": "user", "content": f"Log de erro dos testes:\n\n{log_erro}"},
+        "contents": [
+            {
+                "parts": [{"text": prompt}]
+            }
         ],
-        "temperature": 0.3,
-        "max_tokens": 1024,
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 1024,
+        },
     }
 
-    response = requests.post(endpoint, headers=headers, json=payload, timeout=60)
+    try:
+        response = requests.post(
+            endpoint,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=60,
+        )
 
-    if response.status_code != 200:
-        return f"Erro ao chamar GitHub Models: {response.status_code} - {response.text}"
+        if response.status_code != 200:
+            return (
+                f"Erro ao chamar Gemini API: {response.status_code} - "
+                f"{response.text}"
+            )
 
-    resultado = response.json()
-    return resultado["choices"][0]["message"]["content"]
+        resultado = response.json()
+        return resultado["candidates"][0]["content"]["parts"][0]["text"]
+
+    except requests.RequestException as e:
+        return f"Erro de conexão com Gemini API: {e}"
+    except (KeyError, IndexError) as e:
+        return f"Erro ao processar resposta do Gemini: {e}"
 
 
 def enviar_teams(mensagem: str, webhook_url: str) -> bool:
     """Envia mensagem para o Microsoft Teams via Incoming Webhook."""
     if not webhook_url:
-        print("AVISO: TEAMS_WEBHOOK_URL não configurado. Pulando envio.")
+        print("⚠️  TEAMS_WEBHOOK_URL não configurado. Pulando envio.")
         return False
 
-    # Formato Adaptive Card para Teams
+    # Adaptive Card para Teams
     payload = {
         "type": "message",
         "attachments": [
@@ -81,31 +94,40 @@ def enviar_teams(mensagem: str, webhook_url: str) -> bool:
                     "body": [
                         {
                             "type": "TextBlock",
-                            "text": "🚨 Falha na Pipeline CI",
+                            "text": "🚨 Falha na Pipeline CI - Análise Gemini",
                             "weight": "Bolder",
                             "size": "Large",
                             "color": "Attention",
                         },
                         {
-                            "type": "TextBlock",
-                            "text": f"**Repositório:** {os.environ.get('GITHUB_REPOSITORY', 'N/A')}",
-                            "wrap": True,
+                            "type": "FactSet",
+                            "facts": [
+                                {
+                                    "title": "Repositório",
+                                    "value": os.environ.get(
+                                        "GITHUB_REPOSITORY", "N/A"
+                                    ),
+                                },
+                                {
+                                    "title": "Branch",
+                                    "value": os.environ.get(
+                                        "GITHUB_REF_NAME", "N/A"
+                                    ),
+                                },
+                                {
+                                    "title": "Commit",
+                                    "value": os.environ.get("GITHUB_SHA", "N/A")[
+                                        :8
+                                    ],
+                                },
+                            ],
                         },
+                        {"type": "TextBlock", "text": " ", "spacing": "Medium"},
                         {
                             "type": "TextBlock",
-                            "text": f"**Branch:** {os.environ.get('GITHUB_REF_NAME', 'N/A')}",
-                            "wrap": True,
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": f"**Commit:** {os.environ.get('GITHUB_SHA', 'N/A')[:8]}",
-                            "wrap": True,
-                        },
-                        {"type": "TextBlock", "text": "---", "spacing": "Medium"},
-                        {
-                            "type": "TextBlock",
-                            "text": "**Análise do Agente IA:**",
+                            "text": "🤖 **Análise do Agente IA (Gemini):**",
                             "weight": "Bolder",
+                            "size": "Medium",
                         },
                         {
                             "type": "TextBlock",
@@ -117,8 +139,13 @@ def enviar_teams(mensagem: str, webhook_url: str) -> bool:
                     "actions": [
                         {
                             "type": "Action.OpenUrl",
-                            "title": "Ver Pipeline",
-                            "url": f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
+                            "title": "🔗 Ver Pipeline",
+                            "url": (
+                                f"https://github.com/"
+                                f"{os.environ.get('GITHUB_REPOSITORY', '')}/"
+                                f"actions/runs/"
+                                f"{os.environ.get('GITHUB_RUN_ID', '')}"
+                            ),
                         }
                     ],
                 },
@@ -126,14 +153,28 @@ def enviar_teams(mensagem: str, webhook_url: str) -> bool:
         ],
     }
 
-    response = requests.post(webhook_url, json=payload, timeout=30)
+    try:
+        response = requests.post(webhook_url, json=payload, timeout=30)
 
-    if response.status_code in (200, 202):
-        print("✅ Notificação enviada ao Teams com sucesso.")
-        return True
-    else:
-        print(f"❌ Falha ao enviar para Teams: {response.status_code} - {response.text}")
+        if response.status_code in (200, 202):
+            print("✅ Notificação enviada ao Teams com sucesso.")
+            return True
+        else:
+            print(
+                f"❌ Falha ao enviar para Teams: "
+                f"{response.status_code} - {response.text}"
+            )
+            return False
+    except requests.RequestException as e:
+        print(f"❌ Erro de conexão com Teams: {e}")
         return False
+
+
+def salvar_analise(analise: str, caminho: str = "copilot_analysis.txt"):
+    """Salva a análise em arquivo para artifact."""
+    with open(caminho, "w", encoding="utf-8") as f:
+        f.write(analise)
+    print(f"💾 Análise salva em: {caminho}")
 
 
 def main():
@@ -142,7 +183,7 @@ def main():
     webhook_url = os.environ.get("TEAMS_WEBHOOK_URL", "")
 
     print("=" * 60)
-    print("🤖 AGENTE DE ANÁLISE DE ERROS - INICIANDO")
+    print("🤖 AGENTE DE ANÁLISE DE ERROS (Gemini) - INICIANDO")
     print("=" * 60)
 
     # 1. Carregar log de erro
@@ -154,15 +195,18 @@ def main():
     print(f"📄 Log carregado ({len(log_erro)} caracteres)")
     print("-" * 60)
 
-    # 2. Analisar com LLM
-    print("🧠 Enviando para análise via GitHub Models (GPT-4o)...")
-    analise = analisar_com_llm(log_erro)
+    # 2. Analisar com Gemini
+    print("🧠 Enviando para análise via Google Gemini (gemini-2.0-flash)...")
+    analise = analisar_com_gemini(log_erro)
     print("\n📋 ANÁLISE DO AGENTE:")
     print("-" * 60)
     print(analise)
     print("-" * 60)
 
-    # 3. Enviar para Teams
+    # 3. Salvar análise para artifact
+    salvar_analise(analise)
+
+    # 4. Enviar para Teams
     print("\n📤 Enviando notificação para o Teams...")
     enviar_teams(analise, webhook_url)
 
