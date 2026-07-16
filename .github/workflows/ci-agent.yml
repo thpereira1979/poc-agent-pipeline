@@ -1,4 +1,4 @@
-name: CI - Agente de Análise de Erros
+name: CI - Agente Copilot de Análise de Erros
 
 on:
   push:
@@ -15,7 +15,7 @@ on:
 
 permissions:
   contents: read
-  models: read
+  copilot-requests: write
 
 jobs:
   test-and-analyze:
@@ -31,7 +31,15 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Instalar dependências
+      - name: Configurar Node.js (para Copilot CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar Copilot CLI
+        run: npm install -g @github/copilot
+
+      - name: Instalar dependências Python
         run: pip install -r requirements.txt
 
       - name: Executar testes
@@ -50,16 +58,28 @@ jobs:
             echo "has_errors=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Executar Agente de Análise
+      - name: Analisar erro com Copilot CLI
         if: steps.check.outputs.has_errors == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
+        run: |
+          ERROR_LOG=$(cat test_output.log)
+          copilot -p "Você é um engenheiro de software sênior especialista em Python. Analise o log de erro de testes abaixo e forneça: 1) Um resumo claro do que falhou 2) A causa raiz provável 3) Sugestão de correção. Seja direto e objetivo. Responda em português brasileiro. Log de erro: ${ERROR_LOG}" --no-ask-user > copilot_analysis.txt 2>&1
+          echo "--- ANÁLISE DO COPILOT ---"
+          cat copilot_analysis.txt
+
+      - name: Enviar notificação para Teams
+        if: steps.check.outputs.has_errors == 'true'
+        env:
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          TEST_LOG_PATH: test_output.log
-        run: python agent/analyzer.py
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python agent/notify_teams.py
 
       - name: Falhar pipeline se testes falharam
         if: steps.check.outputs.has_errors == 'true'
         run: |
-          echo "❌ Testes falharam. Verifique a análise do agente no Teams."
+          echo "❌ Testes falharam. Análise do Copilot enviada ao Teams."
           exit 1

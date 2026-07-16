@@ -1,105 +1,133 @@
-# POC - Agente LLM na Pipeline CI/CD
+# POC - Agente Copilot na Pipeline CI/CD
 
 ## Visão Geral
 
-Esta POC demonstra a viabilidade técnica de ter um **agente inteligente (LLM)** rodando dentro de uma esteira CI/CD no GitHub Actions. Quando um módulo Python é alterado, a pipeline executa os testes e, em caso de falha, o agente analisa o erro usando **GitHub Models (GPT-4o)** e envia uma explicação detalhada para o **Microsoft Teams**.
+Esta POC demonstra a viabilidade técnica de ter um **agente inteligente (GitHub Copilot)** rodando dentro de uma esteira CI/CD no GitHub Actions. Quando o módulo Python é alterado, a pipeline executa os testes e, em caso de falha, o **Copilot CLI** analisa o erro e envia uma explicação inteligente para o **Microsoft Teams**.
 
 ## Arquitetura
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        GITHUB ACTIONS                             │
-│                                                                  │
-│  ┌─────────┐    ┌─────────┐    ┌──────────────┐    ┌─────────┐ │
-│  │ Checkout │───▶│ Pytest  │───▶│ Agente LLM   │───▶│  Teams  │ │
-│  │  código  │    │ (testes)│    │ (analyzer.py)│    │ Webhook │ │
-│  └─────────┘    └────┬────┘    └──────┬───────┘    └─────────┘ │
-│                       │               │                          │
-│                  test_output.log  GitHub Models                   │
-│                                   (GPT-4o)                       │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        GITHUB ACTIONS                                 │
+│                                                                      │
+│  ┌─────────┐    ┌─────────┐    ┌──────────────┐    ┌─────────────┐ │
+│  │ Checkout │───▶│ Pytest  │───▶│ Copilot CLI  │───▶│ Teams       │ │
+│  │  código  │    │ (testes)│    │ (análise IA) │    │ (Webhook)   │ │
+│  └─────────┘    └────┬────┘    └──────────────┘    └─────────────┘ │
+│                       │                                              │
+│                  test_output.log                                      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Fluxo de Execução
 
-1. Developer faz push no path `src/**`
+1. Developer faz push alterando algo no path `src/**`
 2. GitHub Actions dispara a pipeline
 3. Pytest executa os testes unitários
 4. **Se testes passam** → pipeline finaliza com sucesso ✅
-5. **Se testes falham** → agente é acionado:
-   - Lê o log de erro
-   - Envia para GitHub Models (GPT-4o) para análise
-   - Recebe explicação inteligente com causa raiz e sugestão
-   - Envia Adaptive Card para canal do Teams
+5. **Se testes falham** → Copilot CLI é acionado:
+   - Recebe o log de erro como prompt
+   - Gera análise inteligente (causa raiz + sugestão de correção)
+   - Script Python envia Adaptive Card para canal do Teams
    - Pipeline falha com indicação de verificar o Teams
+
+---
+
+## Pré-requisitos
+
+- Conta GitHub com **plano Copilot ativo** (Individual, Business ou Enterprise)
+- Acesso a um canal do **Microsoft Teams**
+- Git instalado localmente
 
 ---
 
 ## Passo a Passo de Configuração
 
-### 1. Criar Repositório no GitHub
+### 1. Clonar/Subir o Repositório
 
+Se ainda não fez push:
 ```bash
-# Na raiz do projeto (esta pasta)
 git init
 git add .
-git commit -m "feat: POC agente LLM na pipeline"
+git commit -m "feat: POC agente Copilot na pipeline"
 git branch -M main
 git remote add origin https://github.com/SEU_USUARIO/poc-agent-pipeline.git
 git push -u origin main
 ```
 
-### 2. Configurar Webhook do Microsoft Teams
+### 2. Criar Personal Access Token (PAT) para o Copilot
 
-#### 2.1 Criar Incoming Webhook no Teams
+O Copilot CLI precisa de um PAT com permissão específica:
+
+1. Acesse: https://github.com/settings/personal-access-tokens/new
+2. Selecione **Fine-grained token**
+3. Configure:
+   - **Nome:** `copilot-ci-agent`
+   - **Expiração:** 90 dias (ou conforme política)
+   - **Repository access:** selecione o repositório `poc-agent-pipeline`
+   - **Permissions:**
+     - Em **Account permissions**, habilite: **Copilot Requests → Read and write**
+4. Clique em **Generate token**
+5. **Copie o token** (começa com `github_pat_...`)
+
+### 3. Configurar Incoming Webhook no Microsoft Teams
+
+#### Opção A: Teams Clássico (Conectores)
 
 1. Abra o **Microsoft Teams**
 2. Vá ao **canal** onde deseja receber as notificações
 3. Clique nos **três pontos (⋯)** ao lado do nome do canal
-4. Selecione **Gerenciar canal** (Manage channel)
-5. Expanda a seção **Conectores** (ou vá em Configurações > Conectores)
-6. Procure **"Incoming Webhook"** e clique em **Configurar**
-7. Dê um nome (ex: `CI Pipeline Agent`)
-8. Opcionalmente, adicione um ícone
-9. Clique em **Criar**
-10. **Copie a URL gerada** — essa é a URL do webhook
+4. Selecione **Gerenciar canal** > **Conectores**
+5. Procure **"Incoming Webhook"** e clique em **Configurar**
+6. Dê um nome: `CI Pipeline Copilot`
+7. Clique em **Criar**
+8. **Copie a URL** do webhook gerado
 
-> ⚠️ **Nota:** Se estiver usando o "novo" Teams (Workflows), o caminho pode ser:
-> - Vá em **Power Automate** > **Criar fluxo** > **Quando um webhook é recebido**
-> - Ou em Teams: Canal > ⋯ > **Workflows** > **Postar em um canal quando um webhook é recebido**
-> - Copie a URL do webhook gerado
+#### Opção B: Teams Novo (Workflows / Power Automate)
 
-#### 2.2 Testar o Webhook (opcional)
+1. No canal do Teams, clique nos **⋯** > **Workflows**
+2. Busque: **"Postar em um canal quando um webhook é recebido"**
+3. Selecione o template e configure o canal de destino
+4. Clique em **Adicionar fluxo de trabalho**
+5. **Copie a URL** do webhook gerado
 
+#### Testar o Webhook (opcional)
+
+Linux/Mac:
 ```bash
 curl -X POST "SUA_URL_DO_WEBHOOK" \
   -H "Content-Type: application/json" \
-  -d '{"type":"message","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive","content":{"type":"AdaptiveCard","version":"1.4","body":[{"type":"TextBlock","text":"Teste de webhook!"}]}}]}'
+  -d '{"type":"message","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive","content":{"type":"AdaptiveCard","version":"1.4","body":[{"type":"TextBlock","text":"✅ Webhook funcionando!"}]}}]}'
 ```
 
-Se aparecer a mensagem no canal, o webhook está funcionando.
+PowerShell:
+```powershell
+$body = '{"type":"message","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive","content":{"type":"AdaptiveCard","version":"1.4","body":[{"type":"TextBlock","text":"✅ Webhook funcionando!"}]}}]}'
+Invoke-RestMethod -Uri "SUA_URL_DO_WEBHOOK" -Method Post -Body $body -ContentType "application/json"
+```
 
-### 3. Configurar GitHub Secrets
+Se a mensagem aparecer no canal, o webhook está OK.
 
-1. Vá ao repositório no GitHub
-2. **Settings** > **Secrets and variables** > **Actions**
-3. Clique em **New repository secret**
-4. Adicione:
+### 4. Configurar GitHub Secrets
 
-| Nome do Secret       | Valor                                      |
-|---------------------|--------------------------------------------|
-| `TEAMS_WEBHOOK_URL` | URL copiada do webhook do Teams            |
+1. Vá ao repositório no GitHub: **Settings** > **Secrets and variables** > **Actions**
+2. Clique em **New repository secret** e adicione:
 
-> **Nota:** O `GITHUB_TOKEN` já é fornecido automaticamente pelo GitHub Actions com permissão de acesso ao GitHub Models.
+| Nome do Secret       | Valor                                          |
+|---------------------|------------------------------------------------|
+| `COPILOT_PAT`       | Token PAT criado no passo 2                    |
+| `TEAMS_WEBHOOK_URL` | URL do webhook do Teams criada no passo 3      |
 
-### 4. Habilitar GitHub Models
+### 5. Verificar Permissões do Workflow
 
-1. Vá ao repositório no GitHub
-2. Verifique se o GitHub Models está disponível na sua conta/organização
-3. No workflow, já adicionamos `permissions: models: read`
-4. O `GITHUB_TOKEN` automático do Actions terá acesso ao endpoint de modelos
+O workflow já está configurado com:
+```yaml
+permissions:
+  contents: read
+  copilot-requests: write
+```
 
-> ⚠️ Se o GitHub Models ainda não estiver disponível na sua conta, pode ser necessário entrar na lista de espera em: https://github.com/marketplace/models
+Isso permite que o Copilot CLI funcione com o PAT dentro do Actions.
 
 ---
 
@@ -107,37 +135,54 @@ Se aparecer a mensagem no canal, o webhook está funcionando.
 
 ### Cenário 1: Testes Passam (sem notificação)
 
-Sem alterar nada no código, faça push. Todos os testes devem passar.
-
+Sem alterar nada no módulo, a pipeline passa normalmente:
 ```bash
-git push origin main
+git commit --allow-empty -m "test: trigger pipeline"
+git push
 ```
+> Nota: só dispara se houver mudanças em `src/`. Para teste rápido, adicione um comentário.
 
-### Cenário 2: Forçar Erro (agente ativado + notificação Teams)
+### Cenário 2: Forçar Erro (Copilot analisa + notifica Teams)
 
-Altere o módulo para introduzir um bug:
+Introduza um bug no módulo:
 
 ```python
 # src/calculadora.py - altere a função somar:
 def somar(a: float, b: float) -> float:
-    return a - b  # Bug intencional: subtrai ao invés de somar
+    """Retorna a soma de dois números."""
+    return a - b  # BUG INTENCIONAL: subtrai ao invés de somar
 ```
 
+Faça push:
 ```bash
-git add .
-git commit -m "test: introduzir bug para testar agente"
-git push origin main
+git add src/calculadora.py
+git commit -m "test: introduzir bug para testar agente Copilot"
+git push
 ```
 
 **Resultado esperado:**
-1. Pipeline executa pytest → testes falham
-2. Agente lê o log de erro
-3. Agente envia para GPT-4o → recebe análise inteligente
-4. Agente envia Adaptive Card para o Teams com:
-   - Resumo da falha
-   - Causa raiz
-   - Sugestão de correção
-5. Pipeline falha com mensagem indicando verificar o Teams
+1. ✅ Pipeline dispara (mudança em `src/`)
+2. ✅ Pytest executa → testes falham
+3. ✅ Copilot CLI recebe o log e gera análise
+4. ✅ Script Python envia Adaptive Card para o Teams
+5. ✅ Pipeline falha com mensagem clara
+
+### Cenário 3: Corrigir o Bug
+
+```python
+# src/calculadora.py - restaure a função:
+def somar(a: float, b: float) -> float:
+    """Retorna a soma de dois números."""
+    return a + b  # Corrigido
+```
+
+```bash
+git add src/calculadora.py
+git commit -m "fix: corrigir função somar"
+git push
+```
+
+Pipeline deve passar sem acionar o Copilot.
 
 ---
 
@@ -152,11 +197,14 @@ git push origin main
 │   ├── __init__.py
 │   └── test_calculadora.py     # Testes unitários (pytest)
 ├── agent/
-│   └── analyzer.py             # Agente LLM (GitHub Models + Teams)
+│   ├── __init__.py
+│   ├── analyzer.py             # (legado - GitHub Models)
+│   └── notify_teams.py         # Envia análise para Teams
 ├── .github/
 │   └── workflows/
 │       └── ci-agent.yml        # Pipeline GitHub Actions
 ├── requirements.txt            # Dependências Python
+├── .gitignore
 └── README.md                   # Este arquivo
 ```
 
@@ -164,28 +212,33 @@ git push origin main
 
 ## Critérios de Sucesso da POC
 
-| # | Critério                                                | Status |
-|---|--------------------------------------------------------|--------|
-| 1 | Pipeline dispara apenas quando `src/` é alterado       | ⬜     |
-| 2 | Testes executam corretamente (pytest)                  | ⬜     |
-| 3 | Agente é acionado SOMENTE quando há falha              | ⬜     |
-| 4 | LLM (GitHub Models) retorna análise coerente           | ⬜     |
-| 5 | Notificação chega no Teams com Adaptive Card           | ⬜     |
-| 6 | Card contém: repo, branch, commit, análise, link       | ⬜     |
-| 7 | Pipeline falha corretamente quando testes falham       | ⬜     |
+| # | Critério                                                    | Status |
+|---|-------------------------------------------------------------|--------|
+| 1 | Pipeline dispara apenas quando `src/` é alterado            | ⬜     |
+| 2 | Testes executam corretamente (pytest)                       | ⬜     |
+| 3 | Copilot CLI é acionado SOMENTE quando há falha              | ⬜     |
+| 4 | Copilot retorna análise coerente em português               | ⬜     |
+| 5 | Notificação chega no Teams com Adaptive Card                | ⬜     |
+| 6 | Card contém: repo, branch, commit, análise, link            | ⬜     |
+| 7 | Pipeline falha corretamente quando testes falham            | ⬜     |
 
 ---
 
 ## Troubleshooting
 
-### Erro 403 no GitHub Models
-- Verifique se sua conta/org tem acesso ao GitHub Models
-- Confirme que o workflow tem `permissions: models: read`
+### Erro "copilot: command not found"
+- Verifique se o step de instalação está antes do step de execução
+- Confirme que `npm install -g @github/copilot` foi executado com sucesso
+
+### Erro de autenticação do Copilot
+- Confirme que o secret `COPILOT_PAT` está configurado
+- Verifique se o PAT tem a permissão **"Copilot Requests"**
+- Confirme que seu plano Copilot está ativo
 
 ### Webhook do Teams não funciona
-- Teste a URL manualmente com curl
-- Verifique se o formato está como Adaptive Card (necessário para novos webhooks)
-- Se usar Workflows (Power Automate), o payload pode ter formato diferente
+- Teste a URL manualmente com curl/PowerShell
+- Verifique se o payload está no formato Adaptive Card
+- Se usar Workflows (Power Automate), confirme que o fluxo está ativo
 
 ### Testes não encontram o módulo
 - Verifique se `src/__init__.py` existe
@@ -199,28 +252,34 @@ git push origin main
 # Instalar dependências
 pip install -r requirements.txt
 
-# Rodar testes
+# Rodar testes (devem passar)
 pytest tests/ -v
 
-# Testar o agente manualmente (precisa das env vars)
-export GITHUB_TOKEN="seu_token_pat"
-export TEAMS_WEBHOOK_URL="url_do_webhook"
-export TEST_LOG_PATH="test_output.log"
-
-# Gerar log de erro
+# Simular falha e gerar log
+# (altere calculadora.py com bug, depois rode:)
 pytest tests/ -v --tb=long > test_output.log 2>&1
 
-# Rodar agente
-python agent/analyzer.py
+# Testar envio para Teams (precisa da env var)
+export TEAMS_WEBHOOK_URL="url_do_webhook"
+python agent/notify_teams.py
 ```
 
 ---
 
 ## Tecnologias
 
-- **Python 3.12** — Linguagem principal
+- **Python 3.12** — Linguagem do módulo e scripts
 - **pytest** — Framework de testes
 - **GitHub Actions** — Plataforma de CI/CD
-- **GitHub Models (GPT-4o)** — LLM para análise inteligente
+- **GitHub Copilot CLI** — Agente LLM para análise de erros
 - **Microsoft Teams (Incoming Webhook)** — Canal de notificação
 - **Adaptive Cards** — Formato rico para mensagens no Teams
+
+---
+
+## Referências
+
+- [GitHub Copilot CLI em Actions](https://docs.github.com/en/copilot/how-tos/copilot-cli/automate-copilot-cli/automate-with-actions)
+- [Autenticação com GITHUB_TOKEN](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli-in-actions)
+- [Adaptive Cards Designer](https://adaptivecards.io/designer/)
+- [Teams Incoming Webhooks](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook)
