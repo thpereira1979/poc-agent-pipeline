@@ -1,0 +1,65 @@
+name: CI - Agente de Análise de Erros
+
+on:
+  push:
+    paths:
+      - "src/**"
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+    paths:
+      - "src/**"
+    branches:
+      - main
+
+permissions:
+  contents: read
+  models: read
+
+jobs:
+  test-and-analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Executar testes
+        id: tests
+        continue-on-error: true
+        run: |
+          pytest tests/ -v --tb=long 2>&1 | tee test_output.log
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+
+      - name: Verificar resultado dos testes
+        id: check
+        run: |
+          if grep -q "FAILED\|ERROR" test_output.log; then
+            echo "has_errors=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_errors=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Executar Agente de Análise
+        if: steps.check.outputs.has_errors == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          TEST_LOG_PATH: test_output.log
+        run: python agent/analyzer.py
+
+      - name: Falhar pipeline se testes falharam
+        if: steps.check.outputs.has_errors == 'true'
+        run: |
+          echo "❌ Testes falharam. Verifique a análise do agente no Teams."
+          exit 1
