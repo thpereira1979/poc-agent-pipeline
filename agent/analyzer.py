@@ -18,60 +18,54 @@ def carregar_log_erro(caminho_log: str) -> str:
         return f.read()
 
 
-def analisar_com_gemini(log_erro: str) -> str:
-    """Envia o log de erro para o Google Gemini e retorna a análise."""
-    api_key = os.environ.get("GEMINI_API_KEY")
+def analisar_com_llm(log_erro: str) -> str:
+    """Envia o log de erro para a Groq API (Llama 3.1 70B) e retorna a análise."""
+    api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        return "ERRO: GEMINI_API_KEY não configurada."
+        return "ERRO: GROQ_API_KEY não configurada."
 
-    endpoint = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
-    )
+    endpoint = "https://api.groq.com/openai/v1/chat/completions"
 
-    prompt = (
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    prompt_sistema = (
         "Você é um engenheiro de software sênior especialista em Python. "
         "Analise o log de erro de testes abaixo e forneça:\n"
         "1. Um resumo claro do que falhou\n"
         "2. A causa raiz provável\n"
         "3. Sugestão de correção com exemplo de código\n\n"
-        "Seja direto e objetivo. Responda em português brasileiro.\n\n"
-        f"=== LOG DE ERRO ===\n{log_erro}"
+        "Seja direto e objetivo. Responda em português brasileiro."
     )
 
     payload = {
-        "contents": [
-            {
-                "parts": [{"text": prompt}]
-            }
+        "model": "llama-3.1-70b-versatile",
+        "messages": [
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": f"Log de erro dos testes:\n\n{log_erro}"},
         ],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 1024,
-        },
+        "temperature": 0.3,
+        "max_tokens": 1024,
     }
 
     try:
-        response = requests.post(
-            endpoint,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=60,
-        )
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=60)
 
         if response.status_code != 200:
             return (
-                f"Erro ao chamar Gemini API: {response.status_code} - "
+                f"Erro ao chamar Groq API: {response.status_code} - "
                 f"{response.text}"
             )
 
         resultado = response.json()
-        return resultado["candidates"][0]["content"]["parts"][0]["text"]
+        return resultado["choices"][0]["message"]["content"]
 
     except requests.RequestException as e:
-        return f"Erro de conexão com Gemini API: {e}"
+        return f"Erro de conexão com Groq API: {e}"
     except (KeyError, IndexError) as e:
-        return f"Erro ao processar resposta do Gemini: {e}"
+        return f"Erro ao processar resposta da Groq: {e}"
 
 
 def enviar_teams(mensagem: str, webhook_url: str) -> bool:
@@ -94,7 +88,7 @@ def enviar_teams(mensagem: str, webhook_url: str) -> bool:
                     "body": [
                         {
                             "type": "TextBlock",
-                            "text": "🚨 Falha na Pipeline CI - Análise Gemini",
+                            "text": "🚨 Falha na Pipeline CI - Análise IA",
                             "weight": "Bolder",
                             "size": "Large",
                             "color": "Attention",
@@ -125,7 +119,7 @@ def enviar_teams(mensagem: str, webhook_url: str) -> bool:
                         {"type": "TextBlock", "text": " ", "spacing": "Medium"},
                         {
                             "type": "TextBlock",
-                            "text": "🤖 **Análise do Agente IA (Gemini):**",
+                            "text": "🤖 **Análise do Agente IA (Llama 3.1):**",
                             "weight": "Bolder",
                             "size": "Medium",
                         },
@@ -183,7 +177,7 @@ def main():
     webhook_url = os.environ.get("TEAMS_WEBHOOK_URL", "")
 
     print("=" * 60)
-    print("🤖 AGENTE DE ANÁLISE DE ERROS (Gemini) - INICIANDO")
+    print("🤖 AGENTE DE ANÁLISE DE ERROS (Groq/Llama) - INICIANDO")
     print("=" * 60)
 
     # 1. Carregar log de erro
@@ -195,9 +189,9 @@ def main():
     print(f"📄 Log carregado ({len(log_erro)} caracteres)")
     print("-" * 60)
 
-    # 2. Analisar com Gemini
-    print("🧠 Enviando para análise via Google Gemini (gemini-2.0-flash)...")
-    analise = analisar_com_gemini(log_erro)
+    # 2. Analisar com LLM (Groq - Llama 3.1 70B)
+    print("🧠 Enviando para análise via Groq (Llama 3.1 70B)...")
+    analise = analisar_com_llm(log_erro)
     print("\n📋 ANÁLISE DO AGENTE:")
     print("-" * 60)
     print(analise)

@@ -1,4 +1,4 @@
-name: CI - Agente Gemini de Análise de Erros
+name: CI - Agente IA de Análise de Erros (Groq/Llama)
 
 on:
   push:
@@ -49,10 +49,10 @@ jobs:
             echo "has_errors=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Executar Agente de Análise (Gemini)
+      - name: Executar Agente de Análise (Groq/Llama)
         if: steps.check.outputs.has_errors == 'true'
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
           TEST_LOG_PATH: test_output.log
           GITHUB_REPOSITORY: ${{ github.repository }}
