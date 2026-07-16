@@ -7,17 +7,13 @@ Esta POC demonstra a viabilidade técnica de ter um **agente inteligente (LLM)**
 ## Arquitetura
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        GITHUB ACTIONS                                 │
-│                                                                      │
-│  ┌─────────┐    ┌─────────┐    ┌──────────────┐    ┌─────────────┐ │
-│  │ Checkout │───▶│ Pytest  │───▶│ Agente LLM   │───▶│ Teams       │ │
-│  │  código  │    │ (testes)│    │ (Gemini API) │    │ (Webhook)   │ │
-│  └─────────┘    └────┬────┘    └──────┬───────┘    └─────────────┘ │
-│                       │               │                              │
-│                  test_output.log   Análise salva                      │
-│                                   como Artifact                      │
-└──────────────────────────────────────────────────────────────────────┘
+
+GITHUB ACTIONS:
+    CHECKOUT CÓDIGO >> PYTEST (TESTES) >> AGENT LLM (GEMINI API) >> TEAMS (WEBHOOK)
+
+PYTEST (TESTES) - test_output.log
+AGENTE LLM (GEMINI API) - análise salva como artifact
+
 ```
 
 ## Fluxo de Execução
