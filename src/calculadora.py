@@ -3,7 +3,7 @@
 
 def somar(a: float, b: float) -> float:
     """Retorna a soma de dois números."""
-    return a + b
+    return a - b  # BUG INTENCIONAL: subtrai ao invés de somar
 
 
 def subtrair(a: float, b: float) -> float:
