@@ -3,7 +3,7 @@
 
 def somar(a: float, b: float) -> float:
     """Retorna a soma de dois números."""
-    return a - b  # BUG para teste do agente Gemini v2
+    return a - b  # BUG para teste com Groq
 
 
 def subtrair(a: float, b: float) -> float:
