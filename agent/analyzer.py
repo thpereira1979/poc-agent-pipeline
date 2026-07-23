@@ -3,26 +3,47 @@ Agente LLM que analisa erros de testes usando Google Gemini
 e envia notificação inteligente via Microsoft Teams.
 """
 
-import json
 import os
 import sys
 
 import requests
 
+from agent.errors import (
+    AnaliseLLMError,
+    ConfiguracaoError,
+    LogError,
+    NotificacaoError,
+)
+
 
 def carregar_log_erro(caminho_log: str) -> str:
-    """Carrega o conteúdo do log de erro."""
+    """Carrega o conteúdo do log de erro.
+
+    Retorna string vazia quando o arquivo não existe (situação esperada
+    quando os testes passaram). Falhas reais de leitura são propagadas
+    como ``LogError`` em vez de silenciadas.
+    """
     if not os.path.exists(caminho_log):
         return ""
-    with open(caminho_log, "r", encoding="utf-8") as f:
-        return f.read()
+    try:
+        with open(caminho_log, "r", encoding="utf-8") as f:
+            return f.read()
+    except OSError as e:
+        raise LogError(
+            f"Falha ao ler o log de erro em '{caminho_log}': {e}"
+        ) from e
 
 
 def analisar_com_llm(log_erro: str) -> str:
-    """Envia o log de erro para o Google Gemini e retorna a análise."""
+    """Envia o log de erro para o Google Gemini e retorna a análise.
+
+    Raises:
+        ConfiguracaoError: Se ``GEMINI_API_KEY`` não estiver configurada.
+        AnaliseLLMError: Se nenhum modelo retornar uma análise válida.
+    """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return "ERRO: GEMINI_API_KEY não configurada."
+        raise ConfiguracaoError("GEMINI_API_KEY não configurada.")
 
     # Lista de modelos para tentar (do mais novo ao mais antigo)
     modelos = [
@@ -51,6 +72,8 @@ def analisar_com_llm(log_erro: str) -> str:
         },
     }
 
+    erros: list[str] = []
+
     for modelo in modelos:
         endpoint = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -65,27 +88,58 @@ def analisar_com_llm(log_erro: str) -> str:
                 headers={"Content-Type": "application/json"},
                 timeout=60,
             )
-
-            if response.status_code == 200:
-                resultado = response.json()
-                print(f"  ✅ Sucesso com modelo: {modelo}")
-                return resultado["candidates"][0]["content"]["parts"][0]["text"]
-            else:
-                print(f"  ❌ {modelo}: {response.status_code} - {response.json().get('error', {}).get('message', 'erro desconhecido')}")
-                continue
-
         except requests.RequestException as e:
-            print(f"  ❌ {modelo}: erro de conexão - {e}")
-            continue
-        except (KeyError, IndexError) as e:
-            print(f"  ❌ {modelo}: erro ao processar resposta - {e}")
+            msg = f"{modelo}: erro de conexão - {e}"
+            print(f"  ❌ {msg}")
+            erros.append(msg)
             continue
 
-    return "ERRO: Nenhum modelo Gemini disponível respondeu com sucesso."
+        if response.status_code != 200:
+            detalhe = _extrair_mensagem_erro(response)
+            msg = f"{modelo}: HTTP {response.status_code} - {detalhe}"
+            print(f"  ❌ {msg}")
+            erros.append(msg)
+            continue
+
+        try:
+            resultado = response.json()
+            texto = resultado["candidates"][0]["content"]["parts"][0]["text"]
+        except (ValueError, KeyError, IndexError, TypeError) as e:
+            msg = f"{modelo}: resposta inesperada da API - {e}"
+            print(f"  ❌ {msg}")
+            erros.append(msg)
+            continue
+
+        print(f"  ✅ Sucesso com modelo: {modelo}")
+        return texto
+
+    raise AnaliseLLMError(
+        "Nenhum modelo Gemini respondeu com sucesso. Tentativas:\n- "
+        + "\n- ".join(erros)
+    )
+
+
+def _extrair_mensagem_erro(response: requests.Response) -> str:
+    """Extrai uma mensagem legível de uma resposta de erro da API."""
+    try:
+        corpo = response.json()
+    except ValueError:
+        return response.text[:500] or "erro desconhecido"
+    if isinstance(corpo, dict):
+        return corpo.get("error", {}).get("message", "erro desconhecido")
+    return "erro desconhecido"
 
 
 def enviar_teams(mensagem: str, webhook_url: str) -> bool:
-    """Envia mensagem para o Microsoft Teams via Incoming Webhook."""
+    """Envia mensagem para o Microsoft Teams via Incoming Webhook.
+
+    Returns:
+        ``True`` se enviado, ``False`` se o webhook não está configurado
+        (envio pulado intencionalmente).
+
+    Raises:
+        NotificacaoError: Se a requisição de envio falhar.
+    """
     if not webhook_url:
         print("⚠️  TEAMS_WEBHOOK_URL não configurado. Pulando envio.")
         return False
@@ -165,30 +219,41 @@ def enviar_teams(mensagem: str, webhook_url: str) -> bool:
 
     try:
         response = requests.post(webhook_url, json=payload, timeout=30)
-
-        if response.status_code in (200, 202):
-            print("✅ Notificação enviada ao Teams com sucesso.")
-            return True
-        else:
-            print(
-                f"❌ Falha ao enviar para Teams: "
-                f"{response.status_code} - {response.text}"
-            )
-            return False
     except requests.RequestException as e:
-        print(f"❌ Erro de conexão com Teams: {e}")
-        return False
+        raise NotificacaoError(f"Erro de conexão com Teams: {e}") from e
+
+    if response.status_code in (200, 202):
+        print("✅ Notificação enviada ao Teams com sucesso.")
+        return True
+
+    raise NotificacaoError(
+        f"Teams respondeu com HTTP {response.status_code}: {response.text[:500]}"
+    )
 
 
-def salvar_analise(analise: str, caminho: str = "copilot_analysis.txt"):
-    """Salva a análise em arquivo para artifact."""
-    with open(caminho, "w", encoding="utf-8") as f:
-        f.write(analise)
+def salvar_analise(analise: str, caminho: str = "copilot_analysis.txt") -> None:
+    """Salva a análise em arquivo para artifact.
+
+    Raises:
+        LogError: Se a escrita do arquivo falhar.
+    """
+    try:
+        with open(caminho, "w", encoding="utf-8") as f:
+            f.write(analise)
+    except OSError as e:
+        raise LogError(
+            f"Falha ao salvar a análise em '{caminho}': {e}"
+        ) from e
     print(f"💾 Análise salva em: {caminho}")
 
 
-def main():
-    """Fluxo principal do agente."""
+def main() -> int:
+    """Fluxo principal do agente.
+
+    Retorna código de saída: 0 em sucesso, diferente de zero quando a
+    análise ou a notificação falham, garantindo que o erro seja propagado
+    para a pipeline em vez de silenciado.
+    """
     caminho_log = os.environ.get("TEST_LOG_PATH", "test_output.log")
     webhook_url = os.environ.get("TEAMS_WEBHOOK_URL", "")
 
@@ -200,28 +265,49 @@ def main():
     log_erro = carregar_log_erro(caminho_log)
     if not log_erro:
         print("ℹ️  Nenhum log de erro encontrado. Encerrando.")
-        sys.exit(0)
+        return 0
 
     print(f"📄 Log carregado ({len(log_erro)} caracteres)")
     print("-" * 60)
 
     # 2. Analisar com LLM (Google Gemini)
     print("🧠 Enviando para análise via Google Gemini...")
-    analise = analisar_com_llm(log_erro)
+    analise_falhou = False
+    try:
+        analise = analisar_com_llm(log_erro)
+    except (ConfiguracaoError, AnaliseLLMError) as e:
+        analise_falhou = True
+        analise = (
+            "⚠️ O agente NÃO conseguiu gerar a análise automática.\n\n"
+            f"Motivo: {e}\n\n"
+            "Verifique o log de testes anexado como artifact."
+        )
+        print(f"❌ Falha na análise via LLM: {e}", file=sys.stderr)
+
     print("\n📋 ANÁLISE DO AGENTE:")
     print("-" * 60)
     print(analise)
     print("-" * 60)
 
-    # 3. Salvar análise para artifact
+    # 3. Salvar análise para artifact (mesmo em caso de falha da LLM)
     salvar_analise(analise)
 
-    # 4. Enviar para Teams
+    # 4. Enviar para Teams (best-effort, mas falhas não são silenciadas)
     print("\n📤 Enviando notificação para o Teams...")
-    enviar_teams(analise, webhook_url)
+    notificacao_falhou = False
+    try:
+        enviar_teams(analise, webhook_url)
+    except NotificacaoError as e:
+        notificacao_falhou = True
+        print(f"❌ {e}", file=sys.stderr)
+
+    if analise_falhou or notificacao_falhou:
+        print("\n⚠️  Agente finalizado com erros (veja acima).")
+        return 1
 
     print("\n✅ Agente finalizado.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

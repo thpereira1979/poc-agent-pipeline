@@ -275,7 +275,7 @@ python -m pytest tests/ -v --tb=long > test_output.log 2>&1
 set GEMINI_API_KEY=sua_key_aqui
 set TEAMS_WEBHOOK_URL=url_do_webhook
 set TEST_LOG_PATH=test_output.log
-python agent/analyzer.py
+python -m agent.analyzer
 ```
 
 ---

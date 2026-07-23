@@ -5,23 +5,41 @@ Lê o arquivo de análise gerado pelo Copilot CLI e envia como Adaptive Card
 para um canal do Teams via Incoming Webhook.
 """
 
-import json
 import os
 import sys
 
 import requests
 
+from agent.errors import LogError, NotificacaoError
+
 
 def carregar_analise(caminho: str = "copilot_analysis.txt") -> str:
-    """Carrega o conteúdo da análise gerada pelo Copilot CLI."""
+    """Carrega o conteúdo da análise gerada pelo Copilot CLI.
+
+    Raises:
+        LogError: Se o arquivo existir mas não puder ser lido.
+    """
     if not os.path.exists(caminho):
         return "Análise não disponível - arquivo não encontrado."
-    with open(caminho, "r", encoding="utf-8") as f:
-        return f.read().strip()
+    try:
+        with open(caminho, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError as e:
+        raise LogError(
+            f"Falha ao ler a análise em '{caminho}': {e}"
+        ) from e
 
 
 def enviar_teams(mensagem: str, webhook_url: str) -> bool:
-    """Envia mensagem para o Microsoft Teams via Incoming Webhook."""
+    """Envia mensagem para o Microsoft Teams via Incoming Webhook.
+
+    Returns:
+        ``True`` se enviado, ``False`` se o webhook não está configurado
+        (envio pulado intencionalmente).
+
+    Raises:
+        NotificacaoError: Se a requisição de envio falhar.
+    """
     if not webhook_url:
         print("⚠️  TEAMS_WEBHOOK_URL não configurado. Pulando envio.")
         return False
@@ -99,23 +117,24 @@ def enviar_teams(mensagem: str, webhook_url: str) -> bool:
 
     try:
         response = requests.post(webhook_url, json=payload, timeout=30)
-
-        if response.status_code in (200, 202):
-            print("✅ Notificação enviada ao Teams com sucesso.")
-            return True
-        else:
-            print(
-                f"❌ Falha ao enviar para Teams: "
-                f"{response.status_code} - {response.text}"
-            )
-            return False
     except requests.RequestException as e:
-        print(f"❌ Erro de conexão com Teams: {e}")
-        return False
+        raise NotificacaoError(f"Erro de conexão com Teams: {e}") from e
+
+    if response.status_code in (200, 202):
+        print("✅ Notificação enviada ao Teams com sucesso.")
+        return True
+
+    raise NotificacaoError(
+        f"Teams respondeu com HTTP {response.status_code}: {response.text[:500]}"
+    )
 
 
-def main():
-    """Fluxo principal: carrega análise e envia para Teams."""
+def main() -> int:
+    """Fluxo principal: carrega análise e envia para Teams.
+
+    A notificação é best-effort, mas uma falha real de envio é propagada
+    via código de saída diferente de zero, em vez de silenciada.
+    """
     webhook_url = os.environ.get("TEAMS_WEBHOOK_URL", "")
 
     print("=" * 60)
@@ -130,13 +149,16 @@ def main():
     print("-" * 60)
 
     # Enviar para Teams
-    sucesso = enviar_teams(analise, webhook_url)
-
-    if not sucesso:
-        print("⚠️  Notificação não enviada, mas pipeline continua.")
+    try:
+        enviar_teams(analise, webhook_url)
+    except NotificacaoError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        print("⚠️  Notificação não enviada.")
+        return 1
 
     print("\n✅ Script finalizado.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
