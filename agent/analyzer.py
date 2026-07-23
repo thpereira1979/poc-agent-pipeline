@@ -3,19 +3,20 @@ Agente LLM que analisa erros de testes usando Google Gemini
 e envia notificação inteligente via Microsoft Teams.
 """
 
-import json
 import os
 import sys
 
 import requests
 
+try:
+    from agent.common import enviar_teams, ler_arquivo
+except ModuleNotFoundError:  # executado como script: `python agent/analyzer.py`
+    from common import enviar_teams, ler_arquivo
+
 
 def carregar_log_erro(caminho_log: str) -> str:
     """Carrega o conteúdo do log de erro."""
-    if not os.path.exists(caminho_log):
-        return ""
-    with open(caminho_log, "r", encoding="utf-8") as f:
-        return f.read()
+    return ler_arquivo(caminho_log, padrao="")
 
 
 def analisar_com_llm(log_erro: str) -> str:
@@ -84,102 +85,6 @@ def analisar_com_llm(log_erro: str) -> str:
     return "ERRO: Nenhum modelo Gemini disponível respondeu com sucesso."
 
 
-def enviar_teams(mensagem: str, webhook_url: str) -> bool:
-    """Envia mensagem para o Microsoft Teams via Incoming Webhook."""
-    if not webhook_url:
-        print("⚠️  TEAMS_WEBHOOK_URL não configurado. Pulando envio.")
-        return False
-
-    # Adaptive Card para Teams
-    payload = {
-        "type": "message",
-        "attachments": [
-            {
-                "contentType": "application/vnd.microsoft.card.adaptive",
-                "contentUrl": None,
-                "content": {
-                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "type": "AdaptiveCard",
-                    "version": "1.4",
-                    "body": [
-                        {
-                            "type": "TextBlock",
-                            "text": "🚨 Falha na Pipeline CI - Análise Gemini",
-                            "weight": "Bolder",
-                            "size": "Large",
-                            "color": "Attention",
-                        },
-                        {
-                            "type": "FactSet",
-                            "facts": [
-                                {
-                                    "title": "Repositório",
-                                    "value": os.environ.get(
-                                        "GITHUB_REPOSITORY", "N/A"
-                                    ),
-                                },
-                                {
-                                    "title": "Branch",
-                                    "value": os.environ.get(
-                                        "GITHUB_REF_NAME", "N/A"
-                                    ),
-                                },
-                                {
-                                    "title": "Commit",
-                                    "value": os.environ.get("GITHUB_SHA", "N/A")[
-                                        :8
-                                    ],
-                                },
-                            ],
-                        },
-                        {"type": "TextBlock", "text": " ", "spacing": "Medium"},
-                        {
-                            "type": "TextBlock",
-                            "text": "🤖 **Análise do Agente IA (Gemini):**",
-                            "weight": "Bolder",
-                            "size": "Medium",
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": mensagem,
-                            "wrap": True,
-                            "spacing": "Small",
-                        },
-                    ],
-                    "actions": [
-                        {
-                            "type": "Action.OpenUrl",
-                            "title": "🔗 Ver Pipeline",
-                            "url": (
-                                f"https://github.com/"
-                                f"{os.environ.get('GITHUB_REPOSITORY', '')}/"
-                                f"actions/runs/"
-                                f"{os.environ.get('GITHUB_RUN_ID', '')}"
-                            ),
-                        }
-                    ],
-                },
-            }
-        ],
-    }
-
-    try:
-        response = requests.post(webhook_url, json=payload, timeout=30)
-
-        if response.status_code in (200, 202):
-            print("✅ Notificação enviada ao Teams com sucesso.")
-            return True
-        else:
-            print(
-                f"❌ Falha ao enviar para Teams: "
-                f"{response.status_code} - {response.text}"
-            )
-            return False
-    except requests.RequestException as e:
-        print(f"❌ Erro de conexão com Teams: {e}")
-        return False
-
-
 def salvar_analise(analise: str, caminho: str = "copilot_analysis.txt"):
     """Salva a análise em arquivo para artifact."""
     with open(caminho, "w", encoding="utf-8") as f:
@@ -218,7 +123,12 @@ def main():
 
     # 4. Enviar para Teams
     print("\n📤 Enviando notificação para o Teams...")
-    enviar_teams(analise, webhook_url)
+    enviar_teams(
+        analise,
+        webhook_url,
+        titulo="🚨 Falha na Pipeline CI - Análise Gemini",
+        rotulo_analise="🤖 **Análise do Agente IA (Gemini):**",
+    )
 
     print("\n✅ Agente finalizado.")
 
