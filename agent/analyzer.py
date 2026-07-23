@@ -54,7 +54,7 @@ def analisar_com_llm(log_erro: str) -> str:
     for modelo in modelos:
         endpoint = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{modelo}:generateContent?key={api_key}"
+            f"{modelo}:generateContent"
         )
         print(f"  Tentando modelo: {modelo}...")
 
@@ -62,7 +62,10 @@ def analisar_com_llm(log_erro: str) -> str:
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": api_key,
+                },
                 timeout=60,
             )
 
